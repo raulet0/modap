@@ -1,4 +1,4 @@
-# MODAP v 0.1
+# MODAP v 0.1.1
 #
 # First lab model release (21/01/2010)
 #
@@ -56,21 +56,21 @@ def format_list(list):
 
 class Regle(object):
     def __init__(self, id): # BE CAREFUL with default values !
-        self.nom = id
-        self.cond1 = []
-        self.condp = []
-        self.condm = []
-        self.act1 = []
-        self.actp = []
-        self.actm = []
-        self.vars = [] # liste des variables
-        self.cpt = 0   # nombre de predicats positifs avec aucune instance dans BF
-        self.spec = [] # liste des predicats negatifs en conclusion
-        self.cycle = 0 # numero du dernier cycle ou la regle a ete saturee
-        self.cout = 0
+        self.nom = id   # rule name
+        self.cond1 = [] # positives conditions
+        self.condp = [] # functional programatic conditions
+        self.condm = [] # negatives conditions
+        self.act1 = []  # positives actions
+        self.actp = []  # functional programatic actions
+        self.actm = []  # negatives actions
+        self.vars = []  # rule's variables list
+        self.cpt = 0    # number of positive conditions with no instance in fact base
+        self.spec = []  # list of negative predicates in action
+        self.cycle = 0  # last cycle when rule fired
+        self.cout = 0   # cost of firing this rule
     def __repr__(self):
         return "<%s %s:%s>" % (self.__class__.__name__, self.nom, self.cycle)
- 
+
     def compteur(self, *valeur):
         if valeur:
             self.cpt = valeur[0] # first element of the tuple (n,)
@@ -87,7 +87,7 @@ class Regle(object):
 
 class Fait(object):
     def __init__(self, fait):
-        self.value = fait # instance de predicat (P a b)
+        self.value = fait # predicate instance (P a b)
         self.cycle = 0
         self.etat = 'mort'
     def __repr__(self):
@@ -125,11 +125,11 @@ class Moteur(object):
         self.vide()
 
     def vide(self):
-        self.regles = []
-        self.dico = {} # dictionary (hashtable), predicate is key
-        self.faits = []
-        self.conflit = []
-        self.cycle = 0
+        self.regles = []  # rulebase, could be a dictionary
+        self.dico = {}    # dictionary (hashtable), predicate is key
+        self.faits = []   # factbase, could be a dictionary too...
+        self.conflit = [] # conflict set
+        self.cycle = 0    # rule engine cycle
 
     def videfaits(self):
         for fait in self.faits:
@@ -145,6 +145,17 @@ class Moteur(object):
     def afffaits(self):
         for fait in self.faits:
             print fait
+
+    def basefaits(self):
+        return filter(lambda fait: fait.vivantq(), self.faits)
+    
+    def instances(self,cond):
+        # return filter(lambda fait: len(self.filtre(cond,fait.value(),{})) > 0, self.basefaits())
+        stack = []
+        for fait in self.faits:
+            if fait.vivantq() and ( len(self.filtre(cond,fait.value,{}) ) > 0):
+                stack.append(fait)
+        return stack
 
     def lire(self,file):
         self.vide()
@@ -370,9 +381,6 @@ class Moteur(object):
 
 # hello.mot.faits_premisse(hello.mot.regles[0].cond1[0],[],hello.mot.regles[0])
  
-    def basefaits(self):
-        return filter(lambda fait: fait.vivantq(), self.faits)
-    
     def choix(self, liste, subst, conditions, regle):
         # return [first condition, matchable facts]
         return [liste[0], self.faits_premisse(liste[0], conditions, regle)]
@@ -426,6 +434,7 @@ class Moteur(object):
 
     def filtre(self,e1,e2,env):
         sub = dict(env) # be careful with pointer to env !
+        if len(e1) != len(e2): return []
         res = self.filtrex(e1,e2,sub)
         if trace: print '-> filtre',e1,e2,env,'->',res
         return res
@@ -434,7 +443,7 @@ class Moteur(object):
 # hello.mot.filtrex(['p','?x'],['p','a'],{'?x':'a'})
     
     def filtrex(self,e1,e2,env):
-        if len(e1) == 0:
+        if len(e1) == 0: # so len(e2) is expected to be the same
             return [env]
         elif e1[0] == e2[0]:
             return self.filtrex(e1[1:],e2[1:],env)
@@ -442,7 +451,7 @@ class Moteur(object):
             return self.filtrer(e1[0],env[e1[0]] if e1[0] in env else None,e1,e2,env)
     
     def filtrer(self,p1,v1,e1,e2,env):
-        if p1[0] == '?': # self.variableq(p1[0]
+        if self.variableq(p1[0]): # p1[0] == '?'
             if len(p1) > 1:
                 if v1 != None:
                     if v1 == e2[0]:
@@ -476,8 +485,8 @@ class Moteur(object):
         for action in regle.act1:
             # self.insere(self.subst(action, s1))
             fait = self.subst(action, s1)
-            print 3*k*' ','-> conclure1 ajoute',fait
-            self.insere(fait)
+            faitobj = self.insere(fait)
+            print 3*k*' ','-> conclure1 ajoute',faitobj
         return 0
 
     def elire(self, ec): return ec[0] if len(ec) > 0 else None
@@ -495,6 +504,11 @@ class Moteur(object):
 
 mot = Moteur()
 
+def test_instances():
+    for x in ('a','b','c','d','e','f','g','h','i','j','k','l','m','n','o'): #15
+        for y in ('a','b','c','d','e','f','g','h','i','j','k','l','m','n','o'):
+            mot.insere(['homme',x,y])
+
 def test0a():
     mot.insere(['fleur','vrai'])
     mot.insere(['graine'])
@@ -508,17 +522,15 @@ def test0b():
     mot.retire(['rhizome','faux'])
 def test1():
     mot.insere(['homme','socrate','vrai'])
-    mot.insere(['homme','rambo','vrai'])
+    mot.insere(['homme','charlemagne','vrai'])
     mot.insere(['vivant','socrate','vrai'])
 def test2():
     mot.insere(['p','foo'])
 
-# hello.mot.lire('mortel')
+# hello.mot.lire('test0')
 # hello.mot.affdico()
 # hello.mot.affregles()
 # hello.mot.afffaits()
 # hello.mot.infere()
 # hello.mot.videfaits()
 # hello.mot.vide()
-# hello.mot.insere(hello.Fait(['vivant','rambo','vrai']))
-# hello.mot.retire(hello.mot.faits[3])
