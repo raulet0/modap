@@ -1,17 +1,41 @@
-# MODAP v 0.1.1
+# MODAP v 1.0.0
 #
 # First lab model release (21/01/2010)
-#
+# First full functional release (07/03/2010)
 #
 ###############################################################################
 
 rulespath = '/workspace_python/Modap/src/'
-trace = False
+trace = True
+debug = False
 
 ###############################################################################
 # Common tools
 
+# >>> hello.hierarchical_list(['print','compteur:','[','?x','+',10,']'])
+# ['print','compteur:',['?x','+',10]]
+# >>> hello.hierarchical_list(['[','?x','+',10,']'])
+#[['?x', '+', 10]]
+# >>> hello.hierarchical_list(['print','[','?x','+',10,']','?y'])
+# ['print', ['?x', '+', 10], '?y']
+# >>> hello.hierarchical_list(['print','[','?x','*','[','?y','+',10,']',']','?z'])
+# ['print', ['?x', '*', ['?y', '+', 10]], '?z']
+def last_in_list(alist, aitem):
+    ''' return index of last item in the list else return -1 if item not in list '''
+    i = 0
+    while aitem in alist[i:]: i = i + alist[i:].index(aitem) + 1
+    return i - 1
+def hierarchical_list(alist):
+    if len(alist) == 0 or alist[0] == ']':
+        return []
+    elif alist[0] == '[':
+        i = last_in_list(alist, ']')
+        return [hierarchical_list(alist[1:i])] + hierarchical_list(alist[i+1:])
+    else:
+        return [alist[0]] + hierarchical_list(alist[1:])    
+
 def ensemble1(liste):
+    # not used in this release...
     # Renvoie l'ensemble correspondant au multi-ensemble specifie.
     # Ex : (ensemble '(a () c () () c)) -> (a () c).
     if len(liste) == 0:
@@ -78,10 +102,14 @@ class Regle(object):
             return self.cpt
 
     def affiche(self):
-        print 'REGLE', self.nom
-        print 'cond+', self.cond1
-        print 'act+ ', self.act1
-        print "%s %s %s %s %s" % (self.vars,self.cpt,self.spec,self.cycle,self.cout)
+        print 'REGLE:', self.nom
+        print ' cond+', self.cond1
+        print ' condp', self.condp
+        print ' condm', self.condm
+        print ' act+ ', self.act1
+        print ' actp ', self.actp
+        print ' actm ', self.actm
+        print " %s %s %s %s %s" % (self.vars,self.cpt,self.spec,self.cycle,self.cout)
 
 ###############################################################################
 
@@ -142,6 +170,10 @@ class Moteur(object):
     def affregles(self):
         for rule in self.regles:
             rule.affiche()
+    def affregle(self, rulename):
+        for rule in self.regles:
+            if rule.nom == rulename:
+                rule.affiche()
     def afffaits(self):
         for fait in self.faits:
             print fait
@@ -149,7 +181,7 @@ class Moteur(object):
     def basefaits(self):
         return filter(lambda fait: fait.vivantq(), self.faits)
     
-    def instances(self,cond):
+    def instances(self, cond):
         # return filter(lambda fait: len(self.filtre(cond,fait.value(),{})) > 0, self.basefaits())
         stack = []
         for fait in self.faits:
@@ -170,18 +202,18 @@ class Moteur(object):
         self.lp = [] # list of predicates
         for line in f:
             self.lireligne(line.split())
-            if trace: print 'premisse',self.premisse
-            if trace: print 'lp',self.lp
+            if debug: print 'premisse',self.premisse
+            if debug: print 'lp',self.lp
         f.close()
 
     def lireligne(self,ligne):
         # read a line in the rules file
-        if trace: print ligne
+        if debug: print ligne
         if len(ligne) == 0: return
         if ligne[0].upper() == 'REGLE':
             if len(self.regles) > 0: self.majcout(self.regles[-1]) # previous rule
             self.cregle(ligne[1]) # new rule
-            self.lp = []
+            self.lp = [] # RAZ for each rule
         elif ligne[0].upper() == '*':
             return
         elif ligne[0].upper() == 'SI':
@@ -198,9 +230,9 @@ class Moteur(object):
 
     def litp(self,ligne):
         if ligne[0] == 'absent':
-            return 0
-        elif ligne[0][0] == '(': # functional condition
-            return 0
+            self.regles[-1].condm.append(ligne[1:])
+        elif ligne[0][0] == '[': # functional condition
+            self.regles[-1].condp.append(hierarchical_list(ligne[1:-1]))
         else:
             # create an instance of Predicate, add to dico
             # if necessary add a new instance of Filter to this predicate
@@ -212,7 +244,7 @@ class Moteur(object):
             forme = self.forme(ligne)
             if forme not in self.lp:
                 self.lp.extend([forme,'+'])
-                # TODO : use 'compteur' method instead
+                # TODO: use 'compteur' method instead
                 self.regles[-1].cpt = self.regles[-1].cpt + 1
             # add this condition to the rule
             self.regles[-1].cond1.append(ligne)
@@ -221,12 +253,14 @@ class Moteur(object):
         if ligne[0] == '+':
             # create an instance of Predicat, add to dico
             # if necessary add a new instance of Filter to this predicat
-            self.litact(ligne[1:])
-            self.regles[-1].act1.append(ligne[1:])
+            hierarchical_line = hierarchical_list(ligne[1:])
+            self.litact(hierarchical_line)
+            self.regles[-1].act1.append(hierarchical_line)
         elif ligne[0] == '-':
-            return 0
-        elif ligne[0][0] == '(':
-            return 0
+            self.regles[-1].actm.append(hierarchical_list(ligne[1:]))
+            self.majspem(ligne[1:])
+        elif ligne[0][0] == '[':
+            self.regles[-1].actp.append(hierarchical_list(ligne[1:-1]))
 
     def cregle(self, rulename): self.regles.append(Regle(rulename))
     
@@ -238,7 +272,7 @@ class Moteur(object):
     def litpred(self, cond): # initial list form before creating a class instance
         pred, args = cond[0], cond[1:]
         predobj = self.cpred(pred)
-        # if new, link a new instance of Filtre to the predicate instante
+        # if new, link a new instance of Filtre to the predicate instance
         self.majcle(predobj, self.cle(args))
         self.litvar(args)
         return predobj
@@ -246,13 +280,20 @@ class Moteur(object):
     def litact(self, cond): # initial list form before creating a class instance
         pred, args = cond[0], cond[1:]
         predobj = self.cpred(pred)
-        # if new, link a new instance of Filtre to the predicate instante
+        # if new, link a new instance of Filtre to the predicate instance
         self.majcle(predobj, self.cle(args))
         return predobj
     
-    def litvar(self,args): return 0
+    def litvar(self, args): return 0
+    
+    def majspem(self, conclusion):
+        for i in range(0, len(self.lp), 2):
+            if (self.lp[i][0] == conclusion[0]) and (self.lp[i+1] == '+'):
+                if conclusion[0] not in self.regles[-1].spec:
+                    self.regles[-1].spec.append(conclusion[0])                
+                return 0
 
-    def majcout(self,regle): return 0
+    def majcout(self, regle): return 0
     
     def majcle(self, pred, cle):
         if cle not in pred.filtres.keys():
@@ -348,7 +389,7 @@ class Moteur(object):
                     if l2.nombre == 0: self.construitm(l2.regles)
                 l2.faits.remove(fait)
 
-    def variableq(self, arg): return arg[0] == '?'
+    def variableq(self, arg): return isinstance(arg, str) and arg[0] == '?'
 
     def type(self, args, sub):
         # args is just the list of variables without predicate
@@ -380,15 +421,26 @@ class Moteur(object):
             return self.afaits(fts, regle)
 
 # hello.mot.faits_premisse(hello.mot.regles[0].cond1[0],[],hello.mot.regles[0])
+
+    def verifp(self, l1, s1):
+        for cond in l1:
+            if eval(self.eval2str(self.subst(cond, s1))) == False:
+                return False
+        return True
+ 
+    def verifm(self, l1, s1):
+        for cond in l1:
+            if len(self.instances(cond)) != 0: return False
+        return True
  
     def choix(self, liste, subst, conditions, regle):
-        # return [first condition, matchable facts]
+        # return [<first_condition>, <matchable_facts>, <conditions>, <current_rule>]
         return [liste[0], self.faits_premisse(liste[0], conditions, regle)]
    
     def possibles(self,l): return parties(l,len(l))
     
     def declenche(self, r1):
-        print '-> declenche', r1
+        if trace: print '-> declenche', r1
         if len(r1.cond1) > 1 and self.cycler(r1) > 0:
             possibles = self.possibles(r1.cond1)
         else:
@@ -397,46 +449,51 @@ class Moteur(object):
             self.cycle = self.cycle + 1
             self.conflit.remove(r1)
             for conditions in possibles:
-                if trace: print '-> boucle-nouveaux-faits-pour',conditions
+                if debug: print '-> boucle-nouveaux-faits-pour',r1,conditions,'cycle',self.cycle
                 self.saturer(r1.cond1, {}, 1, [], r1, conditions)
         r1.cycle = self.cycle
         return 0
 
     def saturer(self,l1,s1,k,p1,regle,conditions):
-        if trace: print 2*k*' ','-> saturer',l1,s1,k,p1
+        if debug: print 2*k*' ','-> saturer',l1,s1,k,p1
         if len(l1) == 0:
-            res = self.conclure(regle,s1,k,p1)
-            return res
+            if self.verifp(regle.condp, s1) and self.verifm(regle.condm, s1):
+                res = self.conclure(regle,s1,k,p1)
+                return res
+            else:
+                return 0
         else:
             cond = self.choix(l1,s1,conditions,regle)
             res = self.matcher(cond[0],cond[1],k,l1,s1,p1,regle,conditions)
             if res != 0 and res == k:
-                if trace: print 2*k*' ','=> saturer',l1,s1,k,p1
+                if debug: print 2*k*' ','=> saturer',l1,s1,k,p1
                 res = self.saturer(l1,s1,k,p1,regle,conditions)
-            if trace: print 2*k*' ','-> saturer',l1,s1,k,p1,'->', res
+            if debug: print 2*k*' ','-> saturer',l1,s1,k,p1,'->', res
             return res
     
     def matcher(self,c1,lf,k,l1,s1,p1,regle,conditions):
-        if trace: print 2*k*' ','-> matcher',c1,lf,k,l1,s1,p1
+        if debug: print 2*k*' ','-> matcher',c1,lf,k,l1,s1,p1
         if len(lf) == 0:
-            if trace: print 2*k*' ','-> matcher',c1,lf,k,l1,s1,p1,'->', 0
+            # TODO: it could be noway !...
+            if debug: print 2*k*' ','-> matcher',c1,lf,k,l1,s1,p1,'->', 0
             return 0
         else:
+            # TODO: we have to be sure that lf[0] is always alive ?... 
             s2 = self.filtre(c1,lf[0].value,s1)
             if len(s2) != 0:
                 res = self.saturer(l1[1:],s2[0],k+1,p1+[lf[0]],regle,conditions)
                 if res != 0:
-                    if trace: print 2*k*' ','-> matcher',c1,lf,k,l1,s1,p1,'->', res
+                    if debug: print 2*k*' ','-> matcher',c1,lf,k,l1,s1,p1,'->', res
                     return res
             res = self.matcher(c1,lf[1:],k,l1,s1,p1,regle,conditions)
-            if trace: print 2*k*' ','-> matcher',c1,lf,k,l1,s1,p1,'->', res
+            if debug: print 2*k*' ','-> matcher',c1,lf,k,l1,s1,p1,'->', res
             return res
 
     def filtre(self,e1,e2,env):
         sub = dict(env) # be careful with pointer to env !
         if len(e1) != len(e2): return []
         res = self.filtrex(e1,e2,sub)
-        if trace: print '-> filtre',e1,e2,env,'->',res
+        if debug: print '-> filtre',e1,e2,env,'->',res
         return res
 
 # hello.mot.filtrex(['p','?x'],['p','a'],{})
@@ -466,27 +523,56 @@ class Moteur(object):
         else:
             return []
 
-    def subst(self,cond,sub):
-        # res = copy.deepcopy(cond)
+    # def eval2str(self, alist): return str(eval(" ".join(alist)))
+
+    def eval2str(self, alist):
+        expr1 = "".join(alist)
+        expr2 = str(eval(expr1))
+        if debug: print 'EVAL:', expr1,'->', expr2
+        return expr2
+
+    def subst(self, cond, sub):
         if len(cond) == 0:
             return []
+        elif isinstance(cond[0], list):
+            return [self.eval2str(self.subst(cond[0], sub))] + self.subst(cond[1:], sub)
         elif self.variableq(cond[0]) and cond[0] in sub.keys():
             return [sub[cond[0]]] + self.subst(cond[1:], sub)
-        elif isinstance(cond[0], list):
-            return [self.subst(cond[0], sub)] + self.subst(cond[1:], sub)
         else:
             return [cond[0]] + self.subst(cond[1:], sub)
 
     def conclure(self,regle,s1,k,p1):
-        if trace: print 2*k*' ','-> conclure',regle,s1,k,p1
-        return self.conclure1(regle, s1, k, p1)
+        if debug: print 2*k*' ','-> conclure',regle,s1,k,p1
+        self.conclurep(regle, s1, k, p1)
+        self.conclure1(regle, s1, k, p1)
+        return self.conclurem(regle, s1, k, p1)
+
+    def conclurep(self,regle,s1,k,p1):
+        for action in regle.actp:
+            self.eval2str(self.subst(action, s1))
+        return 0
+
+    def conclurem(self,regle,s1,k,p1):
+        # TODO: to be optimized
+        ret = 999
+        for action in regle.actm:
+            fait = self.subst(action, s1)
+            faitobj = self.retire(fait) # be careful, could be None
+            if trace: print 3*k*' ','-> retire',faitobj
+            if (action[0] in regle.spec):
+                for i_fact in range(len(p1)):
+                    if p1[i_fact].value == fait:
+                        if i_fact + 1 < ret: ret = i_fact + 1
+        if ret == 999:
+            return 0
+        else:
+            return ret
 
     def conclure1(self,regle,s1,k,p1):
         for action in regle.act1:
-            # self.insere(self.subst(action, s1))
             fait = self.subst(action, s1)
             faitobj = self.insere(fait)
-            print 3*k*' ','-> conclure1 ajoute',faitobj
+            if trace: print 3*k*' ','-> ajoute',faitobj
         return 0
 
     def elire(self, ec): return ec[0] if len(ec) > 0 else None
@@ -504,11 +590,6 @@ class Moteur(object):
 
 mot = Moteur()
 
-def test_instances():
-    for x in ('a','b','c','d','e','f','g','h','i','j','k','l','m','n','o'): #15
-        for y in ('a','b','c','d','e','f','g','h','i','j','k','l','m','n','o'):
-            mot.insere(['homme',x,y])
-
 def test0a():
     mot.insere(['fleur','vrai'])
     mot.insere(['graine'])
@@ -520,16 +601,76 @@ def test0b():
     mot.retire(['graine'])
     mot.retire(['cotyledone','=','1'])
     mot.retire(['rhizome','faux'])
-def test1():
-    mot.insere(['homme','socrate','vrai'])
-    mot.insere(['homme','charlemagne','vrai'])
-    mot.insere(['vivant','socrate','vrai'])
 def test2():
-    mot.insere(['p','foo'])
+    mot.insere(['p','10','5'])
+def test3():
+    mot.insere(['tableau','t'])
+    mot.insere(['t','1','2'])
+    mot.insere(['t','2','3'])
+    mot.insere(['t','3','4'])
+    mot.insere(['t','4','5'])
+    mot.insere(['t','5','1'])
+def puzzle():
+    # alain cueille gentiane
+    # jean-marc cueille arnica
+    # daniel cueille rhododindron
+    # eric cueille chardon-bleu
+    # patrick cueille edelweiss
+    mot.insere(['card','alain','5'])
+    mot.insere(['peutcueillir','alain','gentiane'])
+    mot.insere(['peutcueillir','alain','arnica'])
+    mot.insere(['peutcueillir','alain','rhododindron'])
+    mot.insere(['peutcueillir','alain','edelweiss'])
+    mot.insere(['peutcueillir','alain','chardon-bleu'])
+    mot.insere(['card','eric','5'])
+    mot.insere(['peutcueillir','eric','gentiane'])
+    mot.insere(['peutcueillir','eric','arnica'])
+    mot.insere(['peutcueillir','eric','rhododindron'])
+    mot.insere(['peutcueillir','eric','edelweiss'])
+    mot.insere(['peutcueillir','eric','chardon-bleu'])
+    mot.insere(['card','patrick','5'])
+    mot.insere(['peutcueillir','patrick','gentiane'])
+    mot.insere(['peutcueillir','patrick','arnica'])
+    mot.insere(['peutcueillir','patrick','rhododindron'])
+    mot.insere(['peutcueillir','patrick','edelweiss'])
+    mot.insere(['peutcueillir','patrick','chardon-bleu'])
+    mot.insere(['card','daniel','5'])
+    mot.insere(['peutcueillir','daniel','gentiane'])
+    mot.insere(['peutcueillir','daniel','arnica'])
+    mot.insere(['peutcueillir','daniel','rhododindron'])
+    mot.insere(['peutcueillir','daniel','edelweiss'])
+    mot.insere(['peutcueillir','daniel','chardon-bleu'])
+    mot.insere(['card','jean-marc','5'])
+    mot.insere(['peutcueillir','jean-marc','gentiane'])
+    mot.insere(['peutcueillir','jean-marc','arnica'])
+    mot.insere(['peutcueillir','jean-marc','rhododindron'])
+    mot.insere(['peutcueillir','jean-marc','edelweiss'])
+    mot.insere(['peutcueillir','jean-marc','chardon-bleu'])
+    mot.insere(['cueille','alain','arnica','non'])
+    mot.insere(['cueille','alain','rhododindron','non'])
+    mot.insere(['cueille','alain','chardon-bleu','non'])
+    mot.insere(['cueille','alain','edelweiss','non'])
+    mot.insere(['cueille','jean-marc','edelweiss','non'])
+    mot.insere(['cueille','jean-marc','rhododindron','non'])
+    mot.insere(['cueille','jean-marc','chardon-bleu','non'])
+    mot.insere(['cueille','eric','edelweiss','non'])
+    mot.insere(['cueille','daniel','edelweiss','non'])
+    mot.insere(['cueille','daniel','chardon-bleu','non'])
+
+def action1(arg):
+    ''' Sample action to be executed by rules '''
+    print '###+> ACTION1',arg
+def action2_affiche(arg1, arg2, arg3):
+    ''' Sample action to be executed by rules '''
+    print arg1, arg2, arg3
+def condition1(arg1, arg2):
+    ''' Sample condition to be directly tested by rules '''
+    return (int(arg1) + int(arg2)) == 15
 
 # hello.mot.lire('test0')
 # hello.mot.affdico()
 # hello.mot.affregles()
+# hello.mot.affregle(<rulename>)
 # hello.mot.afffaits()
 # hello.mot.infere()
 # hello.mot.videfaits()
