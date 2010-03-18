@@ -1,4 +1,4 @@
-# MODAP v 1.0.0
+# MODAP v 1.0.1
 #
 # First lab model release (21/01/2010)
 # First full functional release (07/03/2010)
@@ -6,8 +6,9 @@
 ###############################################################################
 
 rulespath = '/workspace_python/Modap/src/'
-trace = True
+trace = False
 debug = False
+debug_eval = False
 
 ###############################################################################
 # Common tools
@@ -33,6 +34,25 @@ def hierarchical_list(alist):
         return [hierarchical_list(alist[1:i])] + hierarchical_list(alist[i+1:])
     else:
         return [alist[0]] + hierarchical_list(alist[1:])    
+
+# >>> hello.string_in_list(['action1', '(', '"ok', 'terminated', ':', '"', "'", '?x', "'", ')'])
+# ['action1', '(', '"ok terminated : "', "'", '?x', "'", ')']
+def string_in_list(alist):
+    stack, isstr = [], False
+    for token in alist:
+        if (token[0] == '"') and (token[-1] == '"') and (len(token) > 1):
+            stack.append(token)
+        elif (isstr == False) and (token[0] == '"'):
+            isstr = True
+            stack.append(token)
+        elif (isstr == True) and (token[-1] == '"'):
+            isstr = False
+            stack[-1] = stack[-1] + ' ' + token
+        elif (isstr == True):
+            stack[-1] = stack[-1] + ' ' + token
+        else:
+            stack.append(token)
+    return stack
 
 def ensemble1(liste):
     # not used in this release...
@@ -181,18 +201,19 @@ class Moteur(object):
     def basefaits(self):
         return filter(lambda fait: fait.vivantq(), self.faits)
     
-    def instances(self, cond):
-        # return filter(lambda fait: len(self.filtre(cond,fait.value(),{})) > 0, self.basefaits())
+    def instances(self, cond, subst):
+        # return filter(lambda fait: len(self.filtre(cond,fait.value(),subst)) > 0, self.basefaits())
         stack = []
+        # TODO: to be optimized with filter key in place of self.faits...
         for fait in self.faits:
-            if fait.vivantq() and ( len(self.filtre(cond,fait.value,{}) ) > 0):
+            if fait.vivantq() and ( len(self.filtre(cond,fait.value,subst) ) > 0):
                 stack.append(fait)
         return stack
 
     def lire(self,file):
         self.vide()
         filename = rulespath + file + '.reg.txt'
-        print '-> opening', filename
+        print '-> loading', filename
         self.lireregles(filename)
         return self.regles
 
@@ -210,12 +231,12 @@ class Moteur(object):
         # read a line in the rules file
         if debug: print ligne
         if len(ligne) == 0: return
-        if ligne[0].upper() == 'REGLE':
+        if ligne[0][0] == '*':
+            return       
+        elif ligne[0].upper() == 'REGLE':
             if len(self.regles) > 0: self.majcout(self.regles[-1]) # previous rule
             self.cregle(ligne[1]) # new rule
             self.lp = [] # RAZ for each rule
-        elif ligne[0].upper() == '*':
-            return
         elif ligne[0].upper() == 'SI':
             self.premisse = True
         elif ligne[0].upper() == 'ALORS':
@@ -223,9 +244,9 @@ class Moteur(object):
         elif ligne[0].upper() == 'FIN':
             self.majcout(self.regles[-1]) # last rule
         elif self.premisse:
-            self.litp(ligne)
+            self.litp(string_in_list(ligne))
         else:
-            self.lita(ligne)
+            self.lita(string_in_list(ligne))
             return
 
     def litp(self,ligne):
@@ -429,8 +450,9 @@ class Moteur(object):
         return True
  
     def verifm(self, l1, s1):
+        # TODO: make eval2str... 
         for cond in l1:
-            if len(self.instances(cond)) != 0: return False
+            if len(self.instances(cond,s1)) != 0: return False
         return True
  
     def choix(self, liste, subst, conditions, regle):
@@ -528,7 +550,7 @@ class Moteur(object):
     def eval2str(self, alist):
         expr1 = "".join(alist)
         expr2 = str(eval(expr1))
-        if debug: print 'EVAL:', expr1,'->', expr2
+        if debug_eval: print 'EVAL:', expr1,'--->', expr2
         return expr2
 
     def subst(self, cond, sub):
@@ -582,6 +604,23 @@ class Moteur(object):
             self.declenche(self.elire(self.conflit))
         return self.basefaits()
 
+# >>> hello.ask_question('combien de roues ? ','une','deux','trois') 
+def ask_question(question, *values):
+    ques = question + ' (' + ",".join(values) + ') : '
+    response = None
+    while response not in values:
+        response = raw_input(ques).lower()
+    return response
+
+def yes_or_no_p(question):
+    # TODO: french release or english release ?...
+    if ask_question(question,'oui','o','non','n') in ('oui','o'):
+        return 'yes'
+    else: 
+        return 'no'
+        
+def affiche(*values): print('==> ' + " ".join(map(lambda v:str(v),values)))
+
 ###############################################################################
 ##
 ## Manual testing
@@ -589,83 +628,6 @@ class Moteur(object):
 ###############################################################################
 
 mot = Moteur()
-
-def test0a():
-    mot.insere(['fleur','vrai'])
-    mot.insere(['graine'])
-    mot.insere(['cotyledone','=','1'])
-    mot.insere(['rhizome','faux'])
-    # lilas
-def test0b():
-    mot.retire(['fleur','vrai'])
-    mot.retire(['graine'])
-    mot.retire(['cotyledone','=','1'])
-    mot.retire(['rhizome','faux'])
-def test2():
-    mot.insere(['p','10','5'])
-def test3():
-    mot.insere(['tableau','t'])
-    mot.insere(['t','1','2'])
-    mot.insere(['t','2','3'])
-    mot.insere(['t','3','4'])
-    mot.insere(['t','4','5'])
-    mot.insere(['t','5','1'])
-def puzzle():
-    # alain cueille gentiane
-    # jean-marc cueille arnica
-    # daniel cueille rhododindron
-    # eric cueille chardon-bleu
-    # patrick cueille edelweiss
-    mot.insere(['card','alain','5'])
-    mot.insere(['peutcueillir','alain','gentiane'])
-    mot.insere(['peutcueillir','alain','arnica'])
-    mot.insere(['peutcueillir','alain','rhododindron'])
-    mot.insere(['peutcueillir','alain','edelweiss'])
-    mot.insere(['peutcueillir','alain','chardon-bleu'])
-    mot.insere(['card','eric','5'])
-    mot.insere(['peutcueillir','eric','gentiane'])
-    mot.insere(['peutcueillir','eric','arnica'])
-    mot.insere(['peutcueillir','eric','rhododindron'])
-    mot.insere(['peutcueillir','eric','edelweiss'])
-    mot.insere(['peutcueillir','eric','chardon-bleu'])
-    mot.insere(['card','patrick','5'])
-    mot.insere(['peutcueillir','patrick','gentiane'])
-    mot.insere(['peutcueillir','patrick','arnica'])
-    mot.insere(['peutcueillir','patrick','rhododindron'])
-    mot.insere(['peutcueillir','patrick','edelweiss'])
-    mot.insere(['peutcueillir','patrick','chardon-bleu'])
-    mot.insere(['card','daniel','5'])
-    mot.insere(['peutcueillir','daniel','gentiane'])
-    mot.insere(['peutcueillir','daniel','arnica'])
-    mot.insere(['peutcueillir','daniel','rhododindron'])
-    mot.insere(['peutcueillir','daniel','edelweiss'])
-    mot.insere(['peutcueillir','daniel','chardon-bleu'])
-    mot.insere(['card','jean-marc','5'])
-    mot.insere(['peutcueillir','jean-marc','gentiane'])
-    mot.insere(['peutcueillir','jean-marc','arnica'])
-    mot.insere(['peutcueillir','jean-marc','rhododindron'])
-    mot.insere(['peutcueillir','jean-marc','edelweiss'])
-    mot.insere(['peutcueillir','jean-marc','chardon-bleu'])
-    mot.insere(['cueille','alain','arnica','non'])
-    mot.insere(['cueille','alain','rhododindron','non'])
-    mot.insere(['cueille','alain','chardon-bleu','non'])
-    mot.insere(['cueille','alain','edelweiss','non'])
-    mot.insere(['cueille','jean-marc','edelweiss','non'])
-    mot.insere(['cueille','jean-marc','rhododindron','non'])
-    mot.insere(['cueille','jean-marc','chardon-bleu','non'])
-    mot.insere(['cueille','eric','edelweiss','non'])
-    mot.insere(['cueille','daniel','edelweiss','non'])
-    mot.insere(['cueille','daniel','chardon-bleu','non'])
-
-def action1(arg):
-    ''' Sample action to be executed by rules '''
-    print '###+> ACTION1',arg
-def action2_affiche(arg1, arg2, arg3):
-    ''' Sample action to be executed by rules '''
-    print arg1, arg2, arg3
-def condition1(arg1, arg2):
-    ''' Sample condition to be directly tested by rules '''
-    return (int(arg1) + int(arg2)) == 15
 
 # hello.mot.lire('test0')
 # hello.mot.affdico()
