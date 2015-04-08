@@ -1,0 +1,1 @@
+Simple test before loading a real project
